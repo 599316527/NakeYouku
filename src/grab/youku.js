@@ -16,16 +16,17 @@ async function makeNewContext(browser, url = 'about:blank') {
         port: CHROME_DEBUGGER_PORT,
         target: targetId
     })
-    return {
-        targetId,
-        client
+    // 封装一下关闭接口
+    client.kloseTarget = function () {
+        return Target.closeTarget({targetId})
     }
+    return client
 }
 
 async function getVideos(browser, channelId) {
     let url = `http://i.youku.com/i/${channelId}/videos?order=1`
 
-    let {targetId, client} = await makeNewContext(browser)
+    let client = await makeNewContext(browser)
     let {Page, Runtime} = client
     await Page.enable()
 
@@ -43,7 +44,7 @@ async function getVideos(browser, channelId) {
         returnByValue: true
     });
 
-    await Target.closeTarget({targetId})
+    await client.kloseTarget()
 
     return result.result.value
 }
@@ -54,38 +55,45 @@ const pcYoukuVideoInfoApiSuccessMessage = 'SUCCESS::调用成功'
 async function getVideo(browser, videoId) {
     let url = `http://v.youku.com/v_show/id_${videoId}.html`
 
-    let {targetId, client} = await makeNewContext(browser)
+    let client = await makeNewContext(browser)
     let {Page, Network} = client
 
-    let videoInfoPromise = new Promise(function (resolve, reject) {
-        Network.responseReceived(async function ({requestId, response}) {
-            if (!response) return
-            if (!response.url.startsWith(pcYoukuVideoInfoApiPrefix)) return
+    let videoInfo
+    let videoInfoError
+    Network.responseReceived(async function ({requestId, response}) {
+        if (!response) return
+        if (!response.url.startsWith(pcYoukuVideoInfoApiPrefix)) return
 
-            if (response.status !== 200) {
-                reject(new Error('response is not ok'))
-            }
+        // 不能用 new Promise 包一层，然后在最后 Promise.race 并一个超时 Promise 的方式来搞
+        // 因为 resject 只能触发一次，而实际上可能存在第一次令牌失效，重发后又好了的情况
+        // 如果用 Promise，第一次错误后就触发了 reject
+        // 所以这里如果拿到了视频信息就先存，然后在最后轮询，如果有视频信息成功。
+        // 如果超时就失败，返回最后一次响应出错的消息，如果没有错误消息就是超时
+        // 这样做的问题就是，不知道 responseReceiver 怎么算失败，如果一直没有成功，就得等超时出错
 
-            let {body, base64Encoded} = await Network.getResponseBody({ requestId })
-            let content = body.substring(body.indexOf('(') + 1, body.lastIndexOf(')'))
-            let data
-            try {
-                data = JSON.parse(content)
-            }
-            catch (err) {
-                console.log(err)
-                reject(new Error('Can not parse response data'))
-            }
-            if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage 
-                && data.data && data.data.data) {
-                resolve(data.data.data)
-            }
-            else {
-                console.log(JSON.stringify(data))
-                reject(new Error('response is not matched'))
-            }
-        });
-    })
+        if (response.status !== 200) {
+            videoInfoError = 'response is not ok'
+        }
+
+        let {body, base64Encoded} = await Network.getResponseBody({ requestId })
+        let content = body.substring(body.indexOf('(') + 1, body.lastIndexOf(')'))
+        let data
+        try {
+            data = JSON.parse(content)
+        }
+        catch (err) {
+            console.log(err)
+            videoInfoError = 'Can not parse response data'
+        }
+        if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage 
+            && data.data && data.data.data) {
+            videoInfo = data.data.data
+        }
+        else {
+            console.log(JSON.stringify(data))
+            videoInfoError = 'response is not matched'
+        }
+    });
 
     await Network.enable()
     await Page.enable()
@@ -93,24 +101,28 @@ async function getVideo(browser, videoId) {
     await Page.navigate({url});
     await Page.loadEventFired();
 
-    let video
     try {
-        video  = await Promise.race([
-            videoInfoPromise,
-            new Promise(function (resolve, reject) {
-                setTimeout(function () {
-                    reject(new Error('Timeout of waitting for response'))
-                }, 2000)
-            })
-        ])
+        let videoData = await new Promise(function (resolve, reject) {
+            let count = 0
+            let timer = setInterval(function () {
+                if (videoInfo) {
+                    clearInterval(timer)
+                    resolve(videoInfo)
+                }
+                else if (count++ > 9) {
+                    clearInterval(timer)
+                    reject(new Error('Fail to get video data. ' 
+                        + (videoInfoError || 'time out')))
+                }
+            }, 200)
+        })
+        await client.kloseTarget()
+        return videoData
     }
     catch(err) {
-        await Target.closeTarget({targetId})
+        await client.kloseTarget()
         return Promise.reject(err)
     }
-
-    await Target.closeTarget({targetId})
-    return video
 }
 
 

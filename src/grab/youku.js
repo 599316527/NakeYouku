@@ -16,13 +16,16 @@ async function makeNewContext(browser, url = 'about:blank') {
         port: CHROME_DEBUGGER_PORT,
         target: targetId
     })
-    return client
+    return {
+        targetId,
+        client
+    }
 }
 
 async function getVideos(browser, channelId) {
     let url = `http://i.youku.com/i/${channelId}/videos?order=1`
 
-    let client = await makeNewContext(browser)
+    let {targetId, client} = await makeNewContext(browser)
     let {Page, Runtime} = client
     await Page.enable()
 
@@ -40,6 +43,8 @@ async function getVideos(browser, channelId) {
         returnByValue: true
     });
 
+    await Target.closeTarget({targetId})
+
     return result.result.value
 }
 
@@ -49,14 +54,18 @@ const pcYoukuVideoInfoApiSuccessMessage = 'SUCCESS::调用成功'
 async function getVideo(browser, videoId) {
     let url = `http://v.youku.com/v_show/id_${videoId}.html`
 
-    let client = await makeNewContext(browser)
+    let {targetId, client} = await makeNewContext(browser)
     let {Page, Network} = client
 
-    let videoInfo
-    Network.responseReceived(async function ({requestId, response}) {
-        if (!response) return
-        let url = response.url
-        if (url.startsWith(pcYoukuVideoInfoApiPrefix) && response.status === 200) {
+    let videoInfoPromise = new Promise(function (resolve, reject) {
+        Network.responseReceived(async function ({requestId, response}) {
+            if (!response) return
+            if (!response.url.startsWith(pcYoukuVideoInfoApiPrefix)) return
+
+            if (response.status !== 200) {
+                reject(new Error('response is not ok'))
+            }
+
             let {body, base64Encoded} = await Network.getResponseBody({ requestId })
             let content = body.substring(body.indexOf('(') + 1, body.lastIndexOf(')'))
             let data
@@ -64,14 +73,19 @@ async function getVideo(browser, videoId) {
                 data = JSON.parse(content)
             }
             catch (err) {
-                console.log('Fail to parse video info', err)
-                return
+                console.log(err)
+                reject(new Error('Can not parse response data'))
             }
-            if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage) {
-                videoInfo = data.data && data.data.data
+            if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage 
+                && data.data && data.data.data) {
+                resolve(data.data.data)
             }
-        }
-    });
+            else {
+                console.log(JSON.stringify(data))
+                reject(new Error('response is not matched'))
+            }
+        });
+    })
 
     await Network.enable()
     await Page.enable()
@@ -79,19 +93,24 @@ async function getVideo(browser, videoId) {
     await Page.navigate({url});
     await Page.loadEventFired();
 
-    return new Promise(function (resolve, reject) {
-        let count = 0
-        let timer = setInterval(function () {
-            if (videoInfo) {
-                clearInterval(timer)
-                resolve(videoInfo)
-            }
-            else if (count++ > 9) {
-                clearInterval(timer)
-                reject(new Error('Fail to get video data. Time out'))
-            }
-        }, 200)
-    })
+    let video
+    try {
+        video  = await Promise.race([
+            videoInfoPromise,
+            new Promise(function (resolve, reject) {
+                setTimeout(function () {
+                    reject(new Error('Timeout of waitting for response'))
+                }, 2000)
+            })
+        ])
+    }
+    catch(err) {
+        await Target.closeTarget({targetId})
+        return Promise.reject(err)
+    }
+
+    await Target.closeTarget({targetId})
+    return video
 }
 
 

@@ -1,0 +1,3 @@
+
+exports.CHROME_DEBUGGER_PORT = 8121
+exports.SERVER_PORT = 8122

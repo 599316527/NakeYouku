@@ -1,0 +1,19 @@
+{
+  "name": "nakeyouku",
+  "version": "0.0.1",
+  "description": "Nake Youku",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Kyle (ohyes@hk1229.cn)",
+  "license": "MIT",
+  "dependencies": {
+    "body-parser": "^1.18.2",
+    "chrome-launcher": "^0.10.0",
+    "chrome-remote-interface": "^0.25.4",
+    "express": "^4.16.2",
+    "lodash": "^4.17.4"
+  }
+}

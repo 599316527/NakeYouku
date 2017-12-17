@@ -33,20 +33,42 @@ async function getVideos(browser, channelId) {
     await Page.navigate({url});
     await Page.loadEventFired();
 
-    const expression = `Array.from(document.querySelectorAll('.container .YK-box .items .v-link a'))
-                            .map(item => ({
-                                href: item.href,
-                                title: item.title
-                            }))`
+    const expression = `
+        Array.from(document.querySelectorAll('.container .YK-box .items > div.va'))
+            .map(item => {
+                let img = item.querySelector('img')
+                let anchor = item.querySelector('a')
+                let time = item.querySelector('.v-time')
+                let pubDate =  item.querySelector('.v-publishtime')
+
+                return {
+                    album: img.src,
+                    title: anchor.title,
+                    href: anchor.href,
+                    duration: time.innerText.trim(),
+                    pubDate: pubDate.innerText.trim()
+                }
+            })
+    `
 
     const result = await Runtime.evaluate({
         expression,
         returnByValue: true
     });
+    // console.log(result)
 
     await client.kloseTarget()
 
-    return result.result.value
+    let items = []
+    if (result.result.value) {
+        items = result.result.value.map(function (item) {
+            item.duration = parseTimeStr(item.duration)
+            item.pubDate = parseSmartDate(item.pubDate)
+            return item
+        })
+    }
+
+    return items
 }
 
 const pcYoukuVideoInfoApiPrefix = 'http://acs.youku.com/h5/mtop.youku.play.ups.appinfo.get/1.1/'
@@ -125,5 +147,54 @@ async function getVideo(browser, videoId) {
     }
 }
 
+const dayMatch = {
+    '今天': 0,
+    '昨天': -1,
+    '前天': -2,
+    '2天前': -3,
+    '3天前': -4,
+    '4天前': -5,
+    '5天前': -6,
+    '6天前': -7
+}
 
+function parseSmartDate(dateStr) {
+    let date = new Date()
+    date.setHours(0)
+    date.setMinutes(0)
+    date.setSeconds(0)
 
+    let [dStr, tStr] = dateStr.split(/\s+/)
+
+    if (dayMatch[dStr] !== undefined) {
+        date.setTime(date.getTime() + 1e3 * dayMatch[dStr] * 24 * 60 * 60)
+    }
+    else {
+        dStr.split('-').reverse().forEach(function (val, i) {
+            val = parseInt(val, 10)
+            switch (i) {
+                case 0:
+                    date.setDate(val)
+                    break
+                case 1:
+                    date.setMonth(val - 1)
+                    break
+                case 2:
+                    date.setFullYear(val)
+                    break
+            }
+        })
+    }
+
+    if (tStr) {
+        date.setTime(date.getTime() + 1e3 * parseTimeStr(tStr + ':0'))
+    }
+
+    return Math.floor(date.getTime() / 1e3)
+}
+
+function parseTimeStr(timeStr) {
+    return timeStr.split(':').reverse().reduce(function (sum, val, i) {
+        return sum + Math.pow(60, i) * parseInt(val, 10)
+    }, 0)
+}

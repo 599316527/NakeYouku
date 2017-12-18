@@ -107,7 +107,7 @@ async function getVideo(browser, videoId) {
             console.log(err)
             videoInfoError = 'Can not parse response data'
         }
-        if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage 
+        if (data.ret && data.ret[0] && data.ret[0] === pcYoukuVideoInfoApiSuccessMessage
             && data.data && data.data.data) {
             videoInfo = data.data.data
         }
@@ -133,7 +133,7 @@ async function getVideo(browser, videoId) {
                 }
                 else if (count++ > 9) {
                     clearInterval(timer)
-                    reject(new Error('Fail to get video data. ' 
+                    reject(new Error('Fail to get video data. '
                         + (videoInfoError || 'time out')))
                 }
             }, 200)
@@ -150,24 +150,28 @@ async function getVideo(browser, videoId) {
 const dayMatch = {
     '今天': 0,
     '昨天': -1,
-    '前天': -2,
-    '2天前': -3,
-    '3天前': -4,
-    '4天前': -5,
-    '5天前': -6,
-    '6天前': -7
+    '前天': -2
 }
 
 function parseSmartDate(dateStr) {
     let date = new Date()
-    date.setHours(0)
-    date.setMinutes(0)
-    date.setSeconds(0)
 
     let [dStr, tStr] = dateStr.split(/\s+/)
 
     if (dayMatch[dStr] !== undefined) {
         date.setTime(date.getTime() + 1e3 * dayMatch[dStr] * 24 * 60 * 60)
+    }
+    else if (/^\d+天前/u.test(dStr)) {
+        date.setTime(date.getTime() + 1e3 * -1 * parseInt(dStr, 10) * 24 * 60 * 60)
+    }
+    else if (/^\d+小时前/u.test(dStr)) {
+        date.setTime(date.getTime() + 1e3 * -1 * parseInt(dStr, 10) * 60 * 60)
+    }
+    else if (/^\d+分钟前/u.test(dStr)) {
+        date.setTime(date.getTime() + 1e3 * -1 * parseInt(dStr, 10) * 60)
+    }
+    else if (/^\d+秒前/u.test(dStr)) {
+        date.setTime(date.getTime() + 1e3 * -1 * parseInt(dStr, 10))
     }
     else {
         dStr.split('-').reverse().forEach(function (val, i) {
@@ -187,6 +191,9 @@ function parseSmartDate(dateStr) {
     }
 
     if (tStr) {
+        date.setHours(0)
+        date.setMinutes(0)
+        date.setSeconds(0)
         date.setTime(date.getTime() + 1e3 * parseTimeStr(tStr + ':0'))
     }
 
